@@ -2,84 +2,90 @@ name: Auto Build
 
 on:
   workflow_dispatch:
-    # inputs:
-    #   tags:
-    #     description: 'Docker Tag'
-    #     required: false
-    #     default: 'latest'
   push:
-    branches: [main,master]
-    # Only build when files in these directories have been changed
+    branches: [main, master]
     paths:
       - containers/**
       - template/**
   schedule:
-    - cron:  '0 9 * * *' # UTC
+    - cron: '0 9 * * *'
 
 jobs:
-  build:
-    # The type of runner that the job will run on
+  build-linux:
     runs-on: ubuntu-latest
 
     steps:
-    # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
-    - uses: actions/checkout@v3
+      - uses: actions/checkout@v3
 
-    - name: Login to Dockerhub
-      uses: docker/login-action@v2
-      with:
-        username: ${{ secrets.DOCKERHUB_USERNAME }}
-        password: ${{ secrets.DOCKERHUB_PASSWORD }}
+      # Enable QEMU for ARM builds
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
 
-    - name: Login to ghcr.io
-      uses: docker/login-action@v2
-      with:
-        registry: ghcr.io
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
+      # Enable Buildx
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-    - name: Update Images
-      run: ./bin/01-update-images ${{ secrets.GITHUB_TOKEN }}
+      - name: Login to Dockerhub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_PASSWORD }}
 
-    - name: Update Readme
-      run: ./bin/02-update-readme
+      - name: Login to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-    - uses: EndBug/add-and-commit@v4 # You can change this to use a specific version
-      with:
-        # The name of the user that will be displayed as the author of the commit
-        # Default: author of the commit that triggered the run
-        author_name: "bskrtich-ci"
+      - name: Update Images
+        run: ./bin/01-update-images ${{ secrets.GITHUB_TOKEN }}
 
-        # The email of the user that will be displayed as the author of the commit
-        # Default: author of the commit that triggered the run
-        author_email: bskrtich-ci@bearded.io
+      - name: Update Readme
+        run: ./bin/02-update-readme
 
-        # Whether to use the --force option on `git add`, in order to bypass eventual gitignores
-        # Default: false
-        #force: true
+      - uses: EndBug/add-and-commit@v9
+        with:
+          author_name: "bskrtich-ci"
+          author_email: bskrtich-ci@bearded.io
+          message: 'CI: Autobuild Repo'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-        # The message for the commit
-        # Default: 'Commit from GitHub Actions'
-        message: 'CI: Autobuild Repo'
+      # 🔥 Multi-arch build (AMD64 + ARM64)
+      - name: Build and Push Multi-Arch (ghcr.io)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ghcr.io/nekosuneprojects/terraria:latest
 
-      env:
-        # This is necessary in order to push a commit to the repo
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Leave this line unchanged
+      - name: Build and Push Multi-Arch (Docker Hub)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: nekosuneprojects/terraria:latest
 
-    - name: Build and Push Images to ghcr.io
-      run: ./bin/03-build-images push
-      env:
-        CI_REGISTRY_IMAGE: ghcr.io/beardedio/terraria
 
-    - name: Build and Push Images to docker hub
-      run: ./bin/03-build-images push
-      env:
-        CI_REGISTRY_IMAGE: beardedio/terraria
+  build-windows:
+    runs-on: windows-latest
 
-    - name: Docker Hub Description
-      uses: peter-evans/dockerhub-description@v3
-      with:
-        username: ${{ secrets.DOCKER_HUB_USER }}
-        password: ${{ secrets.DOCKER_HUB_PASS }}
-        repository: beardedio/terraria
-        short-description: "Docker images to run a Terraria Server. Images with TShock Server or Vanilla Server are available."
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Login to Dockerhub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+
+      - name: Build and Push Windows Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          platforms: windows/amd64
+          tags: nekosuneprojects/terraria:windows-latest
