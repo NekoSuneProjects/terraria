@@ -4,22 +4,37 @@ set -euo pipefail
 #####
 #
 # This script builds all the docker containers in the repo
+# Supports multi-arch (amd64 + arm64)
 #
 #####
 
 # Settings
 CI_REGISTRY_IMAGE="${CI_REGISTRY_IMAGE:-ghcr.io/beardedio/terraria}"
 LATEST_FOLDER="vanilla"
+PLATFORMS="linux/amd64,linux/arm64"
 
 # Colorize me baby
 green() { printf '\e[1;32m%b\e[0m\n' "$@"; }
 yellow() { printf '\e[1;33m%b\e[0m\n' "$@"; }
 red() { printf '\e[1;31m%b\e[0m\n' "$@"; }
 
+# Ensure buildx exists
+if ! docker buildx version >/dev/null 2>&1; then
+    red "Docker buildx is required but not installed."
+    exit 1
+fi
+
+# Create builder if it doesn't exist
+if ! docker buildx inspect multiarch-builder >/dev/null 2>&1; then
+    yellow "Creating buildx builder..."
+    docker buildx create --name multiarch-builder --use
+fi
+
+docker buildx use multiarch-builder
+docker buildx inspect --bootstrap
+
 # Change to base dir
 cd "${0%/*}/.."
-
-# Get path
 BASEDIR=$(pwd)
 
 for file in $BASEDIR/containers/*/*/Dockerfile ; do
@@ -34,39 +49,47 @@ for file in $BASEDIR/containers/*/*/Dockerfile ; do
             LATEST=$(< ../latest xargs)
         fi
 
-        green "Building $DOCKER_TAG"
+        green "Building $DOCKER_TAG (amd64 + arm64)"
 
-        # if [[ "${*-}" != *rebuild* ]]; then
-        #     STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://hub.docker.com/v2/repositories/$CI_REGISTRY_IMAGE/tags/$DOCKER_TAG/")
-        #     if [ "$STATUS" == 200 ]; then
-        #         yellow 'Tag already exists, skipping build...\n'
-        #         continue
-        #     fi
-        # fi
-
-        docker build --build-arg VCS_REF=`git rev-parse --short HEAD` --pull --tag "$CI_REGISTRY_IMAGE:$DOCKER_TAG" .
+        BUILD_CMD=(
+            docker buildx build
+            --platform "$PLATFORMS"
+            --build-arg VCS_REF="$(git rev-parse --short HEAD)"
+            --pull
+            --tag "$CI_REGISTRY_IMAGE:$DOCKER_TAG"
+        )
 
         if [[ "${*-}" == *push* ]]; then
-            yellow "Pushing tag $DOCKER_TAG"
-            docker push "$CI_REGISTRY_IMAGE:$DOCKER_TAG"
+            BUILD_CMD+=(--push)
+        else
+            # If not pushing, load only native arch locally
+            BUILD_CMD+=(--load --platform "$(docker version --format '{{.Server.Arch}}')")
+        fi
 
-            # If $VERSION matches the latest file then push that tag
+        BUILD_CMD+=(.)
+
+        "${BUILD_CMD[@]}"
+
+        if [[ "${*-}" == *push* ]]; then
+            yellow "Multi-arch image pushed: $DOCKER_TAG"
+
             if [ "$VERSION" == "$LATEST" ]; then
-                yellow "Pushing extra tag $FOLDER-latest"
-                docker tag "$CI_REGISTRY_IMAGE:$DOCKER_TAG" "$CI_REGISTRY_IMAGE:$FOLDER-latest"
-                docker push "$CI_REGISTRY_IMAGE:$FOLDER-latest"
+                yellow "Tagging $FOLDER-latest"
+                docker buildx imagetools create \
+                    -t "$CI_REGISTRY_IMAGE:$FOLDER-latest" \
+                    "$CI_REGISTRY_IMAGE:$DOCKER_TAG"
 
-                # If $LATEST_FOLDER matches the build $FOLDER then push image as latest
                 if [ "$FOLDER" == "$LATEST_FOLDER" ]; then
-                    yellow "Pushing extra tag latest"
-                    docker tag "$CI_REGISTRY_IMAGE:$DOCKER_TAG" "$CI_REGISTRY_IMAGE:latest"
-                    docker push "$CI_REGISTRY_IMAGE:latest"
+                    yellow "Tagging global latest"
+                    docker buildx imagetools create \
+                        -t "$CI_REGISTRY_IMAGE:latest" \
+                        "$CI_REGISTRY_IMAGE:$DOCKER_TAG"
                 fi
             fi
         fi
 
-        green "$DOCKER_TAG Done"'\n'
+        green "$DOCKER_TAG Done"$'\n'
     fi
 done
 
-green 'Done building images\n'
+green 'Done building multi-arch images\n'
