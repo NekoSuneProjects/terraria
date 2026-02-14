@@ -25,18 +25,15 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to Dockerhub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_PASSWORD }}
-
       - name: Login to ghcr.io
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set image name
+        run: echo "IMAGE_NAME=ghcr.io/${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
 
       - name: Update Images
         run: ./bin/01-update-images ${{ secrets.GITHUB_TOKEN }}
@@ -46,8 +43,8 @@ jobs:
 
       - uses: EndBug/add-and-commit@v9
         with:
-          author_name: "bskrtich-ci"
-          author_email: bskrtich-ci@bearded.io
+          author_name: "nekosunevr-ci"
+          author_email: nekosunevr-ci@nekosunevr.co.uk
           message: 'CI: Autobuild Repo'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -59,16 +56,7 @@ jobs:
           context: .
           push: true
           platforms: linux/amd64,linux/arm64
-          tags: ghcr.io/nekosuneprojects/terraria:latest
-
-      - name: Build and Push Multi-Arch (Docker Hub)
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          push: true
-          platforms: linux/amd64,linux/arm64
-          tags: nekosuneprojects/terraria:latest
-
+          tags: ${{ env.IMAGE_NAME }}:latest
 
   build-windows:
     runs-on: windows-latest
@@ -76,11 +64,15 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - name: Login to Dockerhub
+      - name: Login to ghcr.io
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set image name
+        run: echo "IMAGE_NAME=ghcr.io/${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
 
       - name: Build and Push Windows Image
         uses: docker/build-push-action@v5
@@ -88,4 +80,4 @@ jobs:
           context: .
           push: true
           platforms: windows/amd64
-          tags: nekosuneprojects/terraria:windows-latest
+          tags: ${{ env.IMAGE_NAME }}:latest
